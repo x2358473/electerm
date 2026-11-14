@@ -440,8 +440,8 @@ export class StartupQueue {
         }
         // Start suppressing output before sending the integration command.
         // This hides the command and its output until OSC 633 is detected.
-        addon.startOutputSuppression(suppressionTimeout, () => {
-          if (!addon.disposed) {
+        addon.startOutputSuppression(suppressionTimeout, (detected) => {
+          if (!addon.disposed && detected) {
             this.shellInjected = true
           }
           finish()
@@ -449,6 +449,36 @@ export class StartupQueue {
         addon._sendData(integrationCmd)
       })
     })
+  }
+
+  /**
+   * The bastion login menu swallows the script typed at connect time, so no
+   * cwd ever arrives. Reference 1.51.3: retry while cwd is missing, reusing
+   * the PS1 injection (works for bash/zsh/sh, and skips the slow $SHELL
+   * probe).
+   */
+  retryShellIntegration = () => {
+    const addon = this.addon
+    if (
+      this.shellInjected ||
+      !this.canInjectShellIntegration() ||
+      this.isClosed() ||
+      !addon ||
+      addon.disposed
+    ) {
+      return
+    }
+    const now = Date.now()
+    if (now - (this.lastInjectAttempt || 0) < 2000) {
+      return
+    }
+    this.lastInjectAttempt = now
+    addon.startOutputSuppression(1500, (detected) => {
+      if (!addon.disposed && detected) {
+        this.shellInjected = true
+      }
+    }, true)
+    addon._sendData(getShellIntegrationCommand('sh') + '\r')
   }
 }
 

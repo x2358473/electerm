@@ -110,6 +110,17 @@ export default class Sftp extends Component {
     ) {
       this.updateCwd(this.props.cwd)
     }
+    // The connect-time injection lands in the bastion login menu and never
+    // runs. Retry it once the file manager is shown, then fall back to
+    // reopening the channel below.
+    if (
+      this.props.sftpPathFollowSsh &&
+      !this.props.cwd &&
+      prevProps.pane !== this.props.pane &&
+      this.props.pane === paneMap.fileManager
+    ) {
+      refs.get('term-' + this.props.tab.id)?.startupQueue?.retryShellIntegration?.()
+    }
     // A bastion gateway fixes the sftp channel state when it is opened, and
     // never reports OSC 633 cwd. Reopen the channel when the file manager is
     // shown so getPwd resolves the home for the terminal's current dir.

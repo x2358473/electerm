@@ -9,9 +9,10 @@ const loadModule = () => import('../../client/components/terminal/startup-queue.
 
 const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms))
 
-const makeAddon = ({ holdInitialData = false, autoEndSuppression = true } = {}) => {
+const makeAddon = ({ holdInitialData = false, autoEndSuppression = true, detectIntegration = true } = {}) => {
   const sent = []
   const addon = {
+    detectIntegration,
     sent,
     disposed: false,
     outputSuppressed: false,
@@ -29,7 +30,7 @@ const makeAddon = ({ holdInitialData = false, autoEndSuppression = true } = {}) 
       addon.endSuppression = () => {
         addon.outputSuppressed = false
         if (onEnd) {
-          onEnd()
+          onEnd(addon.detectIntegration)
         }
       }
       if (autoEndSuppression) {
@@ -131,6 +132,23 @@ describe('startup queue', () => {
     queue.enqueueShellIntegration(true)
     await tick()
     assert.deepEqual(addon.sent, ['\r'])
+  })
+
+  test('a timed out injection stays retryable', async () => {
+    const { queue, addon } = await makeQueue({
+      sftpPathFollowSsh: true,
+      detectIntegration: false
+    })
+
+    queue.runInitScript()
+    await tick()
+    // no OSC 633 answer: the injection must not count as done
+    assert.equal(queue.shellInjected, false)
+
+    addon.detectIntegration = true
+    queue.retryShellIntegration()
+    await tick()
+    assert.equal(queue.shellInjected, true)
   })
 
   test('scripts still run when the injection never gets initial data', async () => {

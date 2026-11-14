@@ -294,7 +294,7 @@ export default class AttachAddonCustom {
 
   startOutputSuppression = (timeout = 3000, onEnd = null, discardOnTimeout = false) => {
     if (this.disposed) {
-      onEnd?.()
+      onEnd?.(false)
       return
     }
     // A suppression may already be running (e.g. the 500ms keepalive one).
@@ -309,7 +309,7 @@ export default class AttachAddonCustom {
         this.suppressTimeout = null
       }
       this.outputSuppressed = false
-      previous?.()
+      previous?.(false)
     }
     this.outputSuppressed = true
     this.suppressedData = []
@@ -323,7 +323,7 @@ export default class AttachAddonCustom {
     }, timeout)
   }
 
-  stopOutputSuppression = (discard = true) => {
+  stopOutputSuppression = (discard = true, detected = false) => {
     if (this.suppressTimeout) {
       clearTimeout(this.suppressTimeout)
       this.suppressTimeout = null
@@ -342,7 +342,7 @@ export default class AttachAddonCustom {
     if (this.onSuppressionEndCallback) {
       const callback = this.onSuppressionEndCallback
       this.onSuppressionEndCallback = null
-      callback()
+      callback(detected)
     }
   }
 
@@ -489,7 +489,7 @@ export default class AttachAddonCustom {
         // into one chunk, so write only from the first OSC sequence on —
         // everything before it is echo and stays hidden. A leading newline
         // keeps the fresh prompt off the injection-time prompt line.
-        this.stopOutputSuppression(true)
+        this.stopOutputSuppression(true, true)
         this._enqueueWrite('\r\n' + str.slice(oscIdx))
         return
       }
