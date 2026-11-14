@@ -6,6 +6,7 @@ name: mac-arm
 on:
   push:
     branches: [ build, test, build-only, mac-arm ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -39,6 +40,21 @@ jobs:
     - name: Run pb
       run: npm run pb
 
+    # Self-use build: without an Apple certificate notarization fails. Patch
+    # only the copied root config, src/build/electron-builder.json is untouched
+    # so official releases keep signing.
+    - name: Disable code signing for this unsigned build
+      run: |
+        node -e '
+          const fs = require("fs")
+          const p = "electron-builder.json"
+          const j = JSON.parse(fs.readFileSync(p, "utf8"))
+          j.mac.notarize = false
+          j.mac.hardenedRuntime = false
+          j.mac.identity = null
+          fs.writeFileSync(p, JSON.stringify(j, null, 2))
+        '
+
     - name: build
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,10 +64,18 @@ jobs:
         APPLE_ID: ${{ secrets.APPLEID }}
         APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLEIDPASS }}
         APPLE_TEAM_ID: ${{secrets.APPLE_TEAM_ID}}
+        CSC_IDENTITY_AUTO_DISCOVERY: false
         WORKFLOW_NAME: ${{ github.workflow }}
         CF_R2_ACCOUNT_ID: ${{ secrets.CF_R2_ACCOUNT_ID }}
         CF_R2_BUCKET: ${{ secrets.CF_R2_BUCKET }}
         CF_R2_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
         CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
       run: node src/build/bin/build-mac-arm
+
+    - name: Upload dmg
+      uses: actions/upload-artifact@v4
+      with:
+        name: electerm-mac-arm64
+        path: dist/*.dmg
+        if-no-files-found: error
 
