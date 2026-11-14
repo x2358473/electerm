@@ -44,6 +44,10 @@ import { createTerm } from '../terminal/terminal-apis'
 import './sftp.styl'
 
 const e = window.translate
+// Terminal cwd arrives after the ssh socket is ready, while the sftp session
+// is created on connect. Give that first report a short window before falling
+// back to the server home.
+const cwdWaitTimeout = 1200
 
 export default class Sftp extends Component {
   constructor (props) {
@@ -105,6 +109,28 @@ export default class Sftp extends Component {
       prevProps.cwd !== this.props.cwd
     ) {
       this.updateCwd(this.props.cwd)
+    }
+    // A bastion gateway fixes the sftp channel state when it is opened, and
+    // never reports OSC 633 cwd. Reopen the channel when the file manager is
+    // shown so getPwd resolves the home for the terminal's current dir.
+    // Skip while a transfer is running: rebuilding destroys the sftp session.
+    const firstSync = !this.remoteResynced && this.state.remotePath === '/'
+    const followSync = this.props.sftpPathFollowSsh && !this.props.cwd
+    if (
+      (firstSync || followSync) &&
+      prevProps.pane !== this.props.pane &&
+      this.props.pane === paneMap.fileManager &&
+      this.state.inited &&
+      this.sftp &&
+      !(window.store.fileTransfers || []).some(
+        t => t.typeTo !== t.typeFrom && t.inited && t.pausing !== true
+      )
+    ) {
+      this.remoteResynced = true
+      this.setState({
+        remotePath: '',
+        remotePathTemp: ''
+      }, () => this.handleReloadRemoteSftp())
     }
   }
 
@@ -384,6 +410,7 @@ export default class Sftp extends Component {
 
   updateCwd = (cwd = this.props.cwd) => {
     if (!this.state.inited) {
+      this.pendingCwd = cwd
       return
     }
     const type = this.shouldRenderRemote()
@@ -770,7 +797,8 @@ export default class Sftp extends Component {
   remoteList = async (
     returnList = false,
     remotePathReal,
-    oldPath
+    oldPath,
+    retried = false
   ) => {
     const { tab, sessionOptions } = this.props
     const { username, startDirectory } = tab
@@ -844,6 +872,12 @@ export default class Sftp extends Component {
         if (startDirectory) {
           remotePath = normalizeRemotePath(startDirectory)
         } else {
+          if (this.props.sftpPathFollowSsh && !this.props.cwd && !this.state.inited) {
+            const deadline = Date.now() + cwdWaitTimeout
+            while (!this.props.cwd && Date.now() < deadline) {
+              await wait(50)
+            }
+          }
           remotePath = await this.getPwd(username)
         }
       }
@@ -878,8 +912,36 @@ export default class Sftp extends Component {
         this.props.editTab(tab.id, {
           sftpCreated: true
         })
+        const pending = this.pendingCwd
+        this.pendingCwd = null
+        if (
+          pending &&
+          this.props.sftpPathFollowSsh &&
+          pending !== this.state.remotePath
+        ) {
+          this.updateCwd(pending)
+        }
       })
     } catch (e) {
+      if (
+        !retried &&
+        this.sftp &&
+        /no such file/i.test(e?.message || '')
+      ) {
+        try {
+          const home = await this.getPwd(this.props.tab.username)
+          const path = home && normalizeRemotePath(home.trim())
+          if (path && path !== this.state.remotePath) {
+            this.setState({
+              remotePath: path,
+              remotePathTemp: path
+            }, () => this.remoteList(undefined, path, oldPath, true))
+            return
+          }
+        } catch (ex) {
+          console.debug('[sftp] recover remote path failed:', ex)
+        }
+      }
       const update = {
         remoteLoading: false,
         remote: oldRemote,
